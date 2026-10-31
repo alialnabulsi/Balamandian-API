@@ -10,7 +10,8 @@
   },
   "packageManager": "npm@11.19.1",
   "scripts": {
-    "dev": "tsc --project tsconfig.json --watch --noEmit",
+    "dev": "npm run build && npm start",
+    "start": "node --env-file-if-exists=.env --enable-source-maps dist/server.js",
     "build": "tsc --project tsconfig.json",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings 0",
@@ -21,10 +22,14 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@types/express": "5.0.6",
     "@types/node": "24.19.2",
     "eslint": "10.14.0",
     "prettier": "3.9.10",
     "typescript": "6.0.3",
     "typescript-eslint": "8.72.1"
+  },
+  "dependencies": {
+    "express": "5.3.0"
   }
 }

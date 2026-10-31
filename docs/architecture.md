@@ -1,6 +1,6 @@
 # Approved backend architecture
 
-Status: approved architecture; tooling preparation only.
+Status: approved architecture; minimal HTTP server preparation.
 
 ## Deployment and technology
 
@@ -31,12 +31,30 @@ cross-database joins. Institutional roles inform explicitly defined application
 policy; they do not automatically grant application privileges. The application
 authentication and session design remains open.
 
-## Future code placement
+## Current HTTP foundation
 
-These paths describe where approved code will belong. Create them only when needed;
-do not scaffold empty directories or guess feature names.
+`src/app.ts` composes Express through a factory without binding a port.
+`src/server.ts` owns startup and the listening lifecycle; `src/config/server.ts`
+validates the bind address and port before listening. The former empty
+`src/index.ts` tooling placeholder has been removed.
 
-| Future location          | Responsibility                                                                                           |
+The only explicit route is `GET /health`, a dependency-free liveness response.
+Unknown routes receive JSON 404 and unexpected Express errors receive generic JSON 500. These baseline error codes are not a complete future application error model.
+Security headers, disabled framework identification, transport timeouts, startup
+failure handling, and bounded SIGINT/SIGTERM shutdown belong to this foundation.
+See the README for the exact limits, configuration, and local verification command.
+
+Express and its TypeScript declarations are the only dependencies added for this
+stage. No body parser, feature module, external client, or persistence connection
+is composed. Future modules must be mounted before the 404 and final error handlers.
+
+## Code placement
+
+The application, server, and server configuration now exist. The remaining paths
+describe future placement; create them only when needed, without scaffolding empty
+directories or guessing feature names.
+
+| Location                 | Responsibility                                                                                           |
 | ------------------------ | -------------------------------------------------------------------------------------------------------- |
 | `src/app.ts`             | Compose Express and HTTP middleware without binding a port.                                              |
 | `src/server.ts`          | Own startup, resource lifecycle, listening, and bounded shutdown.                                        |
@@ -90,15 +108,17 @@ Apply these requirements when corresponding functionality is implemented:
 See [Express security](https://expressjs.com/en/advanced/best-practice-security/),
 [OWASP REST security](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html),
 and [OWASP API consumption](https://api-security.owasp.org/editions/2023/en/0xaa-unsafe-consumption-of-apis/).
-These are documented expectations, not implemented controls.
+The current HTTP controls are listed above. Other requirements remain expectations
+for the corresponding functionality, not controls already implemented.
 
 ## Decisions intentionally deferred
 
 - Hosting, CI provider, deployment topology, and operational requirements.
 - PostgreSQL provider and major version, migration tooling, and the first schema.
   Parameterized SQL through `pg` is the starting preference; no driver or ORM is
-  needed during tooling preparation.
-- Public API contracts, versioning, and application error conventions.
+  needed during HTTP server preparation.
+- Business API contracts, versioning, and application error conventions beyond the
+  minimal HTTP fallback responses.
 - Application authentication, sessions, onboarding, and authorization policy.
   SIS-API's documentation does not settle these application decisions.
 - SIS fields permitted for retention, freshness/retention rules, institutional
@@ -106,6 +126,6 @@ These are documented expectations, not implemented controls.
 - Runtime validation, logging, abuse-protection, and test tools, selected alongside
   the behavior that needs them.
 
-The next runtime change requires a separately scoped implementation task. This
-phase does not authorize endpoints, schemas, authentication, SIS communication,
+Further runtime changes require separately scoped implementation tasks. This phase
+does not authorize business endpoints, schemas, authentication, SIS communication,
 feature modules, or speculative infrastructure.
