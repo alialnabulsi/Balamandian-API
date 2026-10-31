@@ -1,0 +1,16 @@
+# Installed dependencies and generated output
+node_modules/
+/dist/
+/coverage/
+*.tsbuildinfo
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Logs, diagnostics, and operating-system metadata
+*.log
+report.*.json
+.DS_Store
+Thumbs.db
