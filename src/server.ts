@@ -2,16 +2,20 @@ import { createServer } from 'node:http';
 import process from 'node:process';
 
 import { createApp } from './app.js';
+import { readAuthConfig } from './config/auth.js';
 import { readDatabaseConfig } from './config/database.js';
 import { readServerConfig } from './config/server.js';
+import { createAuthDependencies } from './modules/auth/auth.composition.js';
 import { createDatabasePool, verifyDatabase } from './shared/database/pool.js';
 
 async function startServer() {
   const { host, port } = readServerConfig();
+  const authConfig = readAuthConfig();
   const pool = createDatabasePool(readDatabaseConfig());
+  const auth = createAuthDependencies(pool, authConfig);
   const server = createServer(
     { headersTimeout: 10_000, requestTimeout: 30_000 },
-    createApp(),
+    createApp(auth.service),
   );
   let shutdownPromise: Promise<void> | undefined;
 
@@ -43,6 +47,7 @@ async function startServer() {
             resolve();
           });
         });
+        auth.close();
         await pool.end();
         console.info('HTTP server and database pool stopped.');
       } catch {
@@ -91,7 +96,7 @@ async function startServer() {
 
 startServer().catch(() => {
   console.error(
-    'API startup failed. Check server/database configuration and local PostgreSQL 18 availability.',
+    'API startup failed. Check server/database/SIS/SMTP configuration and local PostgreSQL 18 availability.',
   );
   process.exitCode = 1;
 });

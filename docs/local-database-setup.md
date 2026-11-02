@@ -1,200 +1,64 @@
-# Complete local database setup (Windows PowerShell)
+# Existing local PostgreSQL setup
 
-The 2026-11-02 inspection found Node 22.13.1, npm 11.19.1, and PostgreSQL 17.6
-running on port 5432. Node 24.22.2 and PostgreSQL 18 were not found in the inspected
-installations. No `.env` or database credentials were available. Installation,
-provisioning, connection checks, and migrations are blocked until the following
-manual setup is complete. No database or role changes have been made.
+Verified on 2026-11-02 using the ignored local environment:
 
-## 1. Activate the required Node version
+- PostgreSQL **18.6**, loopback port **5433**.
+- Application database **balamandian**.
+- Existing configured role **postgres**, with credentials reused privately.
+- Node **24.22.2** installed through fnm; system shell may still select Node 22.
 
-`fnm` is already available. In the shell that will run the project commands:
+No development databases or roles need provisioning. Do not change PostgreSQL
+installations or create roles for this feature. PostgreSQL 17 on 5432 is separate.
 
 ```powershell
 fnm env --shell powershell | Out-String | Invoke-Expression
-fnm install 24.22.2
 fnm use 24.22.2
 node --version
 npm --version
 ```
 
-Require `v24.22.2` and `11.19.1` before proceeding. Do not use the managed Node
-26 installation, modify the engine ranges, or use `--force`. Node selection applies
-to the configured shell; verify versions again in any different shell.
+Keep `.env` ignored and do not print it. Explicitly set `PGPORT=5433`; the
+preserved parser defaults to 5432. `DATABASE_URL` is not consumed.
 
-Then, from the repository root, install the already selected dependencies:
+## Migrations
 
-```powershell
-npm install --save-exact pg@8.23.1
-npm install --save-dev --save-exact @types/pg@8.23.1
+```sh
+npm run db:migrate
 ```
 
-Preserve both `package.json` and `package-lock.json` changes. Neither dependency
-has been installed yet; these commands have not been run under a supported Node
-version.
+This builds and runs the existing explicit SQL runner using private configuration,
+never during server startup. `0001_authentication.sql` creates `app_user`,
+`pending_registration` and `app_session`. The foundation already owns
+`schema_migrations`. Never edit applied SQL; use forward migrations.
 
-## 2. Install PostgreSQL 18 alongside 17
-
-Use the installer linked from the official
-[PostgreSQL Windows download page](https://www.postgresql.org/download/windows/).
-Select version 18, its own installation/data directories and Windows service,
-and a free port. Keep PostgreSQL 17, its data directory, and its existing port
-5432 unchanged. Port 5433 is a candidate only if the installer confirms it is
-available; it is not a verified PostgreSQL 18 port.
-
-Keep the new administrator password private. Do not reset credentials on the
-existing PostgreSQL 17 cluster. Record the actual PostgreSQL 18 port and binary
-directory selected during installation.
-
-Set these nonsecret values to the actual installation and administrator account:
-
-```powershell
-$pg18Bin = 'C:\Program Files\PostgreSQL\18\bin' # Adjust if installed elsewhere.
-$pg18Port = [int](Read-Host 'Actual PostgreSQL 18 port')
-$pg18Admin = Read-Host 'PostgreSQL 18 administrator role'
-& "$pg18Bin\psql.exe" -X -W -h 127.0.0.1 -p $pg18Port -U $pg18Admin -d postgres
-```
-
-Enter the administrator password at the hidden prompt. In psql, inspect only:
+Read-only verification through your existing psql connection:
 
 ```sql
-SHOW server_version;
-SHOW port;
-SELECT datname FROM pg_database WHERE datname = 'balamandian';
-SELECT rolname FROM pg_roles
-WHERE rolname IN ('balamandian_app', 'balamandian_migrator');
-```
-
-Require server major 18 and confirm the actual port. If the database or either
-role already exists, **stop provisioning**: inspect ownership and permissions
-before deciding whether to reuse it. Do not overwrite databases, reset passwords,
-or alter existing roles. Existing role changes require explicit approval.
-Exit psql with `\q`.
-
-## 3. Provision only absent, dedicated resources
-
-Only after the preflight confirms that all three names are absent, an authorized
-administrator can create the two login roles and the new database:
-
-```powershell
-& "$pg18Bin\createuser.exe" -W -h 127.0.0.1 -p $pg18Port -U $pg18Admin --login --no-superuser --no-createdb --no-createrole --pwprompt balamandian_migrator
-if ($LASTEXITCODE -ne 0) { throw 'Migration role creation failed; stop here.' }
-& "$pg18Bin\createuser.exe" -W -h 127.0.0.1 -p $pg18Port -U $pg18Admin --login --no-superuser --no-createdb --no-createrole --pwprompt balamandian_app
-if ($LASTEXITCODE -ne 0) { throw 'Application role creation failed; stop here.' }
-& "$pg18Bin\createdb.exe" -W -h 127.0.0.1 -p $pg18Port -U $pg18Admin --owner=balamandian_migrator balamandian
-if ($LASTEXITCODE -ne 0) { throw 'Database creation failed; stop here.' }
-```
-
-Stop immediately if any command fails. The prompts initialize passwords only for
-the newly created roles; choose distinct passwords and keep them out of commands,
-logs, and source control. Do not run these commands against PostgreSQL 17.
-
-Connect as the administrator to the **new** database:
-
-```powershell
-& "$pg18Bin\psql.exe" -X -W -v ON_ERROR_STOP=1 -h 127.0.0.1 -p $pg18Port -U $pg18Admin -d balamandian
-```
-
-Confirm the connection target, then restrict only this new database and schema:
-
-```sql
-SELECT current_database(), current_setting('server_version_num'), inet_server_port();
-REVOKE ALL ON DATABASE balamandian FROM PUBLIC;
-GRANT CONNECT ON DATABASE balamandian TO balamandian_app;
-REVOKE ALL ON SCHEMA public FROM PUBLIC;
-GRANT USAGE ON SCHEMA public TO balamandian_app;
-```
-
-The migration role owns the database and can create schema objects through
-`pg_database_owner`. The application role receives connection/schema usage only:
-no schema creation, database ownership, superuser privileges, role membership,
-or automatic access to migration tracking. Grant application-table permissions
-alongside the future feature migrations; no application tables are created now.
-These commands are instructions, not changes already executed.
-
-## 4. Configure the ignored environment file
-
-From the repository root, create `.env` only if absent:
-
-```powershell
-if (Test-Path -LiteralPath .env) { throw 'Existing .env preserved; edit it locally.' }
-Copy-Item -LiteralPath .env.example -Destination .env -ErrorAction Stop
-git check-ignore .env
-```
-
-Edit `.env` locally: set `PGHOST=127.0.0.1`, `PGPORT` to the **verified PostgreSQL
-18 port**, `PGDATABASE=balamandian`, `PGUSER=balamandian_app`, and `PGPASSWORD` to
-the new application role's password. Use Node's documented `.env` quoting for
-special characters. Never paste this file into chat, print it, or commit it.
-Leave the migration password out of the application `.env`.
-
-Check connectivity as each role using psql's hidden password prompt:
-
-```powershell
-& "$pg18Bin\psql.exe" -X -W -h 127.0.0.1 -p $pg18Port -U balamandian_app -d balamandian
-# Repeat with -U balamandian_migrator for the migration role.
-```
-
-Run the following read-only query for each role:
-
-```sql
-SELECT current_user, current_database(), current_setting('server_version_num'),
-       inet_server_port(),
-       has_database_privilege(current_user, current_database(), 'CONNECT') AS can_connect,
-       has_schema_privilege(current_user, 'public', 'USAGE') AS can_use_schema,
-       has_schema_privilege(current_user, 'public', 'CREATE') AS can_create;
-SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
-FROM pg_roles WHERE rolname = current_user;
-```
-
-Expect `can_create=false` for the application role, `true` for the migration role,
-and all five role flags `false` for both. Both must connect to the intended
-database on major 18.
-
-## 5. Verify once, then run the compiled migration command
-
-With the required Node active, run `npm run check`, then `npm test`. Stop if a
-command fails. This covers typecheck, lint, formatting, one build, and the existing
-database-independent tests without repeating the build separately.
-
-After success, temporarily supply migration credentials and use that build:
-
-```powershell
-$previousDbUser = $env:PGUSER
-$previousDbPassword = $env:PGPASSWORD
-try {
-  $env:PGUSER = 'balamandian_migrator'
-  $env:PGPASSWORD = [Net.NetworkCredential]::new('', (Read-Host 'Migration password' -AsSecureString)).Password
-  node --env-file=.env --enable-source-maps dist/scripts/migrate.js
-  if ($LASTEXITCODE -ne 0) { throw 'Migration command failed; stop here.' }
-  # One repeat checks idempotency, without rebuilding or adding a dummy migration.
-  node --env-file=.env --enable-source-maps dist/scripts/migrate.js
-  if ($LASTEXITCODE -ne 0) { throw 'Migration repeat failed; stop here.' }
-} finally {
-  $env:PGUSER = $previousDbUser
-  $env:PGPASSWORD = $previousDbPassword
-  $previousDbPassword = $null
-}
-```
-
-As the migration role in psql, inspect:
-
-```sql
-SELECT schemaname, tablename, tableowner FROM pg_tables WHERE schemaname = 'public';
+SELECT current_database(), current_user, current_setting('server_version'), inet_server_port();
 SELECT version, name, checksum, applied_at FROM public.schema_migrations ORDER BY version;
+SELECT schemaname, tablename, tableowner FROM pg_tables WHERE schemaname = 'public';
 ```
 
-Expect only `schema_migrations`, owned by `balamandian_migrator`, with zero history
-rows because no application migration exists. Both runs should report zero applied.
-This verifies tracking-table initialization and an idempotent empty run; recording
-an actual feature migration is verified when that migration is approved.
+Runtime needs SELECT/INSERT/UPDATE on the three authentication tables; UUID
+defaults need no sequence grants. Production needs separate schema-owning
+migration and restricted runtime roles. The current local `postgres` configuration
+is not a production permission model. No roles/grants are changed here.
 
-Finally, `npm start` should listen only after the PostgreSQL 18 check succeeds.
-Verify `/health` from another terminal, then use Ctrl+C to verify pool cleanup.
-Keep all repository changes uncommitted on `dev`.
+## Isolated tests
 
-References: [fnm shell setup](https://github.com/Schniz/fnm#shell-setup),
-[createuser](https://www.postgresql.org/docs/18/app-createuser.html),
-[createdb](https://www.postgresql.org/docs/18/app-createdb.html),
-[schema permissions](https://www.postgresql.org/docs/18/ddl-schemas.html), and
-[Node environment files](https://nodejs.org/docs/latest-v24.x/api/environment_variables.html).
+```sh
+npm run check
+npm test
+node --env-file-if-exists=.env --test test/integration/*.test.js
+```
+
+The final command reuses the build. Alternatively use `npm run test:integration`.
+PostgreSQL 18 credentials need CREATE DATABASE permission. Tests create a new
+`balamandian_auth_<32-hex-character-uuid>_test` database, validate its name and
+connection, apply migrations and run fixtures only there, then drop exactly that
+generated database. No existing database is reset; no roles are created. Private
+process credential overrides may be used. A forced kill can leave the generated
+database for deliberate manual cleanup.
+
+SIS/email are mocked, identities fictional, and no real email or deployed SIS
+request occurs. Server startup separately needs complete SIS/OTP/SMTP settings.

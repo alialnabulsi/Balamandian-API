@@ -1,7 +1,8 @@
 # SQL migrations
 
-No application schema is defined yet. The first feature migration will be
-`0001_<description>.sql`; use unique, positive, four-digit versions and lowercase
+The first feature migration is `0001_authentication.sql`, containing application
+users, pending registrations, and opaque bearer sessions. Use unique, positive,
+four-digit versions and lowercase
 snake_case descriptions. Gaps are allowed. Only `.sql` files are executed.
 
 Run `npm run db:migrate` explicitly from the repository root with PostgreSQL 18
@@ -22,8 +23,8 @@ Migration SQL is trusted, reviewed repository code. Files must be transactional
 PostgreSQL SQL: do not include transaction control (`BEGIN`, `COMMIT`, `ROLLBACK`),
 psql commands, or commands prohibited inside transactions (such as
 `CREATE INDEX CONCURRENTLY`). The runner does not parse or sandbox SQL. Keep files
-UTF-8 with LF endings so checksums remain stable. Application tables require
-separate feature approval.
+UTF-8 with LF endings so checksums remain stable. Authentication tables are
+authorized by the complete authentication implementation task.
 
 Use a schema-owning migration role and a separate runtime role with only the
 permissions required by implemented features. The application does not create
