@@ -135,7 +135,7 @@ export class AuthRepository {
     delivered: boolean,
     now: Date,
   ) {
-    // A stale SMTP completion must never activate or invalidate a replacement code.
+    // A stale provider acceptance must never activate or invalidate a replacement code.
     const result = await this.pool.query(
       `UPDATE public.pending_registration SET delivery_state = $3, updated_at = $4
        WHERE id = $1 AND otp_verifier = $2 AND delivery_state = 'sending'

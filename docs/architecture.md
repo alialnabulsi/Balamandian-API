@@ -23,7 +23,7 @@ academic profiles are not persisted or interpreted as application permissions.
 ```text
 HTTP router/controller -> AuthService -> AuthRepository -> PostgreSQL
                               |-> SisGateway -> SisAdapter -> HTTPS SIS
-                              |-> OtpMailer -> SmtpMailer -> SMTP
+                              |-> OtpMailer -> ResendMailer -> Resend HTTPS API
 ```
 
 These are project conventions, not Express requirements. Services have no Express
@@ -31,23 +31,24 @@ objects; repositories own parameterized SQL/transactions; adapters own external
 operations. Constructor/factory injection composes them without a DI framework,
 base repository or speculative infrastructure.
 
-| Location                                          | Responsibility                                                      |
-| ------------------------------------------------- | ------------------------------------------------------------------- |
-| `src/app.ts`                                      | Compose routes, security headers and safe errors without listening. |
-| `src/server.ts`                                   | Startup, database version check, HTTP lifecycle and cleanup.        |
-| `src/config/auth.ts`                              | Validate SIS/OTP/SMTP/session configuration.                        |
-| `src/modules/auth/auth.composition.ts`            | Wire service, repository and adapters.                              |
-| `auth.routes.ts` / `auth.controller.ts`           | Routes, strict DTOs, statuses and responses.                        |
-| `auth.service.ts`                                 | Registration, login and session business rules.                     |
-| `auth.repository.ts`                              | Persistence, parameterized SQL and transactions.                    |
-| `auth.middleware.ts`                              | Bearer checks and bounded single-instance counters.                 |
-| `auth.security.ts`                                | OTP policy, HMAC verifiers and random tokens.                       |
-| `auth.types.ts` / `auth.validators.ts`            | Contracts and runtime validation.                                   |
-| `src/integrations/sis/sis.adapter.ts`             | SIS contract, bounded fetch and safe errors.                        |
-| `src/integrations/email/smtp.adapter.ts`          | Nodemailer transport, TLS and timeouts.                             |
-| `src/shared/http-error.ts`                        | Safe status/code/message and optional Retry-After.                  |
-| `src/shared/database/` / `src/scripts/migrate.ts` | Preserved pool, version check and SQL runner.                       |
-| `database/migrations/0001_authentication.sql`     | First authentication schema.                                        |
+| Location                                          | Responsibility                                                         |
+| ------------------------------------------------- | ---------------------------------------------------------------------- |
+| `src/app.ts`                                      | Compose routes, security headers and safe errors without listening.    |
+| `src/server.ts`                                   | Startup, database version check, HTTP lifecycle and cleanup.           |
+| `src/config/auth.ts`                              | Validate SIS/OTP/Resend/session configuration.                         |
+| `src/modules/auth/auth.composition.ts`            | Wire service, repository and adapters.                                 |
+| `auth.routes.ts` / `auth.controller.ts`           | Routes, strict DTOs, statuses and responses.                           |
+| `auth.service.ts`                                 | Registration, login and session business rules.                        |
+| `auth.repository.ts`                              | Persistence, parameterized SQL and transactions.                       |
+| `auth.middleware.ts`                              | Bearer checks and bounded single-instance counters.                    |
+| `auth.security.ts`                                | OTP policy, HMAC verifiers and random tokens.                          |
+| `auth.types.ts` / `auth.validators.ts`            | Contracts and runtime validation.                                      |
+| `src/integrations/sis/sis.adapter.ts`             | SIS contract, bounded fetch and safe errors.                           |
+| `src/integrations/email/resend.adapter.ts`        | Official Resend SDK, HTTPS, deadline and safe acceptance validation.   |
+| `src/integrations/email/resend-node.d.ts`         | SDK declaration compatibility with Node's existing fetch header types. |
+| `src/shared/http-error.ts`                        | Safe status/code/message and optional Retry-After.                     |
+| `src/shared/database/` / `src/scripts/migrate.ts` | Preserved pool, version check and SQL runner.                          |
+| `database/migrations/0001_authentication.sql`     | First authentication schema.                                           |
 
 Auth filenames in this table are under `src/modules/auth/`.
 
@@ -77,12 +78,24 @@ failed-attempt updates. Unexpected failures roll back/discard failed connections
 Account creation, session creation and pending consumption commit together,
 preventing duplicate accounts and successful OTP replay.
 
-SMTP runs outside transactions. A challenge is committed as `sending`, emailed,
-then conditionally marked `sent` for its exact id/verifier. Verification rejects
-`sending`/`failed` codes. Failures retain cooldown/delivery budget and return an
-error. Stale SMTP completions cannot activate/invalidate replacements. A crash
-after SMTP acceptance can leave an unusable code; request another after cooldown.
-SMTP and PostgreSQL are not atomic. No queue/outbox or automatic retry is added.
+Email submission runs outside transactions. A challenge is committed as `sending`,
+submitted through the Resend SDK, then conditionally marked `sent` for its exact
+id/verifier. The existing database state `sent` means provider acceptance, not
+confirmed recipient delivery. Verification rejects `sending`/`failed` codes.
+Failures retain cooldown/delivery budget and return the existing safe error.
+Stale provider completions cannot activate/invalidate replacements. A crash after
+acceptance can leave an unusable code; request another after cooldown. Resend and
+PostgreSQL are not atomic. No queue/outbox, delivery webhook or automatic retry is added.
+
+`ResendMailer` preserves `OtpMailer.sendOtp(email, otp): Promise<void>` and the
+original plain-text subject/body. The SDK uses an explicit backend key and fixed
+HTTPS base URL. Each call gets an AbortSignal deadline covering request and body
+consumption (5000 ms by default). Only a no-error result with a nonempty email id
+counts as acceptance; malformed responses, SDK exceptions and API errors fail
+with a generic exception that the service maps to `503 EMAIL_UNAVAILABLE`.
+Provider error bodies and causes are neither logged nor propagated. Startup
+rejects SDK debug mode. The SDK uses Node's fetch and owns no SMTP transport or
+application-managed connection pool requiring shutdown.
 
 ## SIS and sessions
 
@@ -120,7 +133,7 @@ closed at capacity. Counters reset on restart; persistent OTP budgets do not.
 
 The unchanged pool accepts loopback only and bounds acquisition/statements/locks
 and idle transactions. HTTP retains ten-second header and thirty-second
-request-receipt timeouts. Shutdown drains HTTP then closes SMTP/pool under the
+request-receipt timeouts. Shutdown drains HTTP then closes the database pool under the
 existing ten-second deadline. `/health` is liveness, not continuous readiness.
 
 The preserved migration runner checks order/checksums and applies SQL/tracking
@@ -141,7 +154,11 @@ Node's test runner and injected fetch cover configuration/security/HTTP/adapters
 Integration tests create a new random `_test` database, apply the real migration
 and exercise real transactions with mocked SIS/email and a controllable clock.
 Only that generated database receives destructive fixtures and is dropped later.
-No real SIS/SMTP credentials are needed.
+No real SIS/Resend credentials are needed. Adapter tests mock HTTPS responses
+while exercising the actual SDK, including API rejections, invalid acceptance ids,
+network errors and timeouts. The SDK's declarations require development-only React
+types and a narrow Node `HeadersInit` alias; no runtime React dependency or broad
+TypeScript checking exemption is introduced.
 
 ## Official references
 
@@ -155,5 +172,7 @@ Consulted before changing backend code:
 - [npm install](https://docs.npmjs.com/cli/v11/commands/npm-install/): dependency/lockfile updates.
 - [PostgreSQL 18 locking](https://www.postgresql.org/docs/18/explicit-locking.html) and [constraints](https://www.postgresql.org/docs/18/ddl-constraints.html): concurrency/invariants.
 - [node-postgres transactions](https://node-postgres.com/features/transactions): one client per transaction.
-- [Nodemailer SMTP](https://nodemailer.com/smtp): transport, TLS and timeouts.
+- [Resend Node quickstart](https://resend.com/docs/send-with-nodejs), [send API](https://resend.com/docs/api-reference/emails/send-email), [errors](https://resend.com/docs/api-reference/errors) and [event types](https://resend.com/docs/webhooks/event-types): SDK submission, failure handling and acceptance versus recipient-server delivery.
+- [Official Resend SDK v6.37.0](https://github.com/resend/resend-node/tree/v6.37.0): request cancellation, fixed API origin, debug behavior and published types.
+- [TypeScript global declarations](https://www.typescriptlang.org/docs/handbook/declaration-files/templates/global-modifying-module-d-ts.html): narrow Node header-type compatibility without enabling DOM globals.
 - [OWASP sessions](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) and [verification-token guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html): unpredictable, expiring, single-use tokens and abuse limits; no password-reset feature is implemented.

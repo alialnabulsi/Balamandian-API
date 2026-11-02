@@ -298,7 +298,7 @@ export class AuthService {
     otp: string;
   }) {
     const { registration, otp } = issued;
-    // No database transaction is held during SMTP. Pending codes are unusable until accepted.
+    // No database transaction is held during email submission. Codes require provider acceptance.
     try {
       await this.mailer.sendOtp(registration.institutionalEmail, otp);
     } catch {

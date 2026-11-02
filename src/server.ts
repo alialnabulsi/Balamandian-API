@@ -47,7 +47,6 @@ async function startServer() {
             resolve();
           });
         });
-        auth.close();
         await pool.end();
         console.info('HTTP server and database pool stopped.');
       } catch {
@@ -96,7 +95,7 @@ async function startServer() {
 
 startServer().catch(() => {
   console.error(
-    'API startup failed. Check server/database/SIS/SMTP configuration and local PostgreSQL 18 availability.',
+    'API startup failed. Check server/database/SIS/Resend configuration and local PostgreSQL 18 availability.',
   );
   process.exitCode = 1;
 });

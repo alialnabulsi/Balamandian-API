@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { createApp } from '../../dist/app.js';
 import { readDatabaseConfig } from '../../dist/config/database.js';
+import { ResendMailer } from '../../dist/integrations/email/resend.adapter.js';
 import { AuthRepository } from '../../dist/modules/auth/auth.repository.js';
 import { AuthService } from '../../dist/modules/auth/auth.service.js';
 import { hashSessionToken } from '../../dist/modules/auth/auth.security.js';
@@ -81,7 +82,7 @@ test('authentication integration using mocked SIS/email and a new isolated Postg
     const mailer = {
       async sendOtp(email, otp) {
         emails.push({ email, otp });
-        if (mailError) throw new Error('private SMTP diagnostics');
+        if (mailError) throw new Error('private email provider diagnostics');
       },
     };
     const options = {
@@ -398,7 +399,87 @@ test('authentication integration using mocked SIS/email and a new isolated Postg
   );
 
   await t.test(
-    'an undelivered challenge cannot be verified while SMTP is in flight',
+    'Resend rejection preserves registration/resend errors and persistent delivery limits',
+    async () => {
+      const f = await fixture();
+      let accepted = false;
+      let submissions = 0;
+      const mailer = new ResendMailer(
+        {
+          resendApiKey: 're_test_only_api_key',
+          resendFromEmail: 'no-reply@example.edu',
+          resendTimeoutMs: 5000,
+        },
+        {
+          async send() {
+            submissions++;
+            return accepted
+              ? { data: { id: randomUUID() }, error: null, headers: null }
+              : {
+                  data: null,
+                  error: {
+                    name: 'rate_limit_exceeded',
+                    statusCode: 429,
+                    message: 'private provider diagnostics',
+                  },
+                  headers: null,
+                };
+          },
+        },
+      );
+      const service = new AuthService(repository, f.sis, mailer, f.options);
+      const expected = {
+        status: 503,
+        code: 'EMAIL_UNAVAILABLE',
+        message:
+          'Verification email could not be delivered. Try registration again after the cooldown.',
+      };
+      await assert.rejects(service.register(credentials), expected);
+      let pending = (
+        await pool.query('SELECT id FROM public.pending_registration')
+      ).rows[0];
+      assert.equal(
+        (await repository.findPending(pending.id)).deliveryState,
+        'failed',
+      );
+      await assert.rejects(service.register(credentials), {
+        code: 'OTP_COOLDOWN',
+      });
+      assert.equal(submissions, 1);
+      f.advance(60000);
+      accepted = true;
+      pending = await service.register(credentials);
+      assert.equal(
+        (await repository.findPending(pending.pendingRegistrationId))
+          .deliveryState,
+        'sent',
+      );
+      f.advance(60000);
+      accepted = false;
+      await assert.rejects(
+        service.resend(pending.pendingRegistrationId),
+        expected,
+      );
+      const failed = await repository.findPending(
+        pending.pendingRegistrationId,
+      );
+      assert.equal(failed.deliveryState, 'failed');
+      assert.equal(failed.resendCount, 2);
+      await assert.rejects(
+        service.verify(pending.pendingRegistrationId, '000000'),
+        { code: 'OTP_UNAVAILABLE' },
+      );
+      assert.equal(
+        (await pool.query('SELECT count(*) FROM public.app_user')).rows[0]
+          .count,
+        '0',
+      );
+      assert.equal(submissions, 3);
+    },
+  );
+
+  await t.test(
+    'an unaccepted challenge cannot be verified while email submission is in flight',
     async () => {
       const f = await fixture();
       let release;
@@ -439,7 +520,7 @@ test('authentication integration using mocked SIS/email and a new isolated Postg
   );
 
   await t.test(
-    'stale SMTP completion cannot activate a replacement challenge',
+    'stale email submission cannot activate a replacement challenge',
     async () => {
       const f = await fixture();
       let release;

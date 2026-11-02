@@ -16,7 +16,7 @@ rejected. Passwords are forwarded exactly as supplied and never retained.
 
 The identifier may instead be the institutional email. SIS is verified first;
 the email destination is always the SIS-provided address, never client-supplied.
-After SMTP acceptance, return **202**:
+After Resend accepts the email submission, return **202**:
 
 ```json
 {
@@ -98,7 +98,7 @@ After cooldown, accepted delivery returns **202**, retaining the pending id:
 The previous code immediately becomes unusable, and failed attempts reset for
 the newly issued code. Allowance is three resends, in addition to the original
 delivery, per one-hour registration window. Credential-based replacement requests
-consume this same allowance. Failed SMTP sends also consume the reserved budget
+consume this same allowance. Failed provider submissions also consume the reserved budget
 and cooldown to avoid retry-based abuse. Codes expire in ten minutes, capped by
 the original registration window's expiry; they never extend that window. After
 window expiry, submit credentials through `/register` again.
@@ -199,30 +199,30 @@ upstream messages are never echoed:
 }
 ```
 
-| HTTP | Code                                                  | Meaning                                                                          |
-| ---- | ----------------------------------------------------- | -------------------------------------------------------------------------------- |
-| 400  | `VALIDATION_ERROR`, `INVALID_JSON`, `INVALID_REQUEST` | Invalid fields, JSON or incomplete body.                                         |
-| 400  | `REGISTRATION_INVALID`                                | Unknown, consumed, invalidated, replaced or window-expired registration handle.  |
-| 400  | `OTP_INVALID`                                         | Incorrect code; failed attempt is committed persistently.                        |
-| 401  | `SIS_INVALID_CREDENTIALS`                             | SIS rejected the institutional credentials.                                      |
-| 401  | `UNAUTHENTICATED`                                     | Missing, malformed, expired, revoked or otherwise unusable bearer session.       |
-| 403  | `REGISTRATION_REQUIRED`                               | SIS identity has no application account.                                         |
-| 403  | `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`              | Existing application account is unverified/disabled.                             |
-| 404  | `NOT_FOUND`                                           | Unknown route.                                                                   |
-| 409  | `ACCOUNT_EXISTS`                                      | Registration conflicts with an existing application account.                     |
-| 409  | `OTP_UNAVAILABLE`                                     | Email delivery has not completed successfully.                                   |
-| 409  | `REGISTRATION_REPLACED`                               | A stale email completion belongs to a replaced challenge.                        |
-| 410  | `OTP_EXPIRED`                                         | Code expired; resend within the registration window.                             |
-| 413  | `REQUEST_TOO_LARGE`                                   | JSON exceeds 8 KiB.                                                              |
-| 415  | `UNSUPPORTED_MEDIA_TYPE`                              | JSON/UTF-8 required; compressed requests are disabled.                           |
-| 429  | `OTP_ATTEMPT_LIMIT`                                   | Five failed attempts on this code; request a new code subject to send limits.    |
-| 429  | `OTP_COOLDOWN`, `OTP_RESEND_LIMIT`                    | Persistent sixty-second cooldown or delivery budget exhausted.                   |
-| 429  | `RATE_LIMITED`                                        | Local process abuse counter exceeded.                                            |
-| 429  | `SIS_RATE_LIMITED`                                    | Remote SIS rate limit.                                                           |
-| 502  | `SIS_INVALID_RESPONSE`                                | Malformed, oversized or unexpected SIS response.                                 |
-| 503  | `SIS_UNAVAILABLE`                                     | Network/timeout/upstream failure, including invalid backend service credentials. |
-| 503  | `EMAIL_UNAVAILABLE`                                   | SMTP did not accept delivery. Retry registration after cooldown.                 |
-| 500  | `INTERNAL_ERROR`                                      | Unexpected failure without internal details.                                     |
+| HTTP | Code                                                  | Meaning                                                                                 |
+| ---- | ----------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 400  | `VALIDATION_ERROR`, `INVALID_JSON`, `INVALID_REQUEST` | Invalid fields, JSON or incomplete body.                                                |
+| 400  | `REGISTRATION_INVALID`                                | Unknown, consumed, invalidated, replaced or window-expired registration handle.         |
+| 400  | `OTP_INVALID`                                         | Incorrect code; failed attempt is committed persistently.                               |
+| 401  | `SIS_INVALID_CREDENTIALS`                             | SIS rejected the institutional credentials.                                             |
+| 401  | `UNAUTHENTICATED`                                     | Missing, malformed, expired, revoked or otherwise unusable bearer session.              |
+| 403  | `REGISTRATION_REQUIRED`                               | SIS identity has no application account.                                                |
+| 403  | `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`              | Existing application account is unverified/disabled.                                    |
+| 404  | `NOT_FOUND`                                           | Unknown route.                                                                          |
+| 409  | `ACCOUNT_EXISTS`                                      | Registration conflicts with an existing application account.                            |
+| 409  | `OTP_UNAVAILABLE`                                     | Email submission has not been accepted successfully.                                    |
+| 409  | `REGISTRATION_REPLACED`                               | A stale email completion belongs to a replaced challenge.                               |
+| 410  | `OTP_EXPIRED`                                         | Code expired; resend within the registration window.                                    |
+| 413  | `REQUEST_TOO_LARGE`                                   | JSON exceeds 8 KiB.                                                                     |
+| 415  | `UNSUPPORTED_MEDIA_TYPE`                              | JSON/UTF-8 required; compressed requests are disabled.                                  |
+| 429  | `OTP_ATTEMPT_LIMIT`                                   | Five failed attempts on this code; request a new code subject to send limits.           |
+| 429  | `OTP_COOLDOWN`, `OTP_RESEND_LIMIT`                    | Persistent sixty-second cooldown or delivery budget exhausted.                          |
+| 429  | `RATE_LIMITED`                                        | Local process abuse counter exceeded.                                                   |
+| 429  | `SIS_RATE_LIMITED`                                    | Remote SIS rate limit.                                                                  |
+| 502  | `SIS_INVALID_RESPONSE`                                | Malformed, oversized or unexpected SIS response.                                        |
+| 503  | `SIS_UNAVAILABLE`                                     | Network/timeout/upstream failure, including invalid backend service credentials.        |
+| 503  | `EMAIL_UNAVAILABLE`                                   | Email submission failed, including provider rejection or timeout. Retry after cooldown. |
+| 500  | `INTERNAL_ERROR`                                      | Unexpected failure without internal details.                                            |
 
 Cooldown/budget/process-rate errors include a bounded `Retry-After` duration in
 seconds; SIS rate errors use a safe sixty-second backoff. Five failed attempts
@@ -240,18 +240,40 @@ reviewed proxy trust are required before multiple application instances.
 
 The OTP verifier is HMAC-SHA-256 keyed by private `OTP_SECRET` and bound to its
 opaque registration id. No plaintext OTP/password/session token is stored or
-logged. Nodemailer accepts only application-created text with file/URL access and
-debug logging disabled. Remote SMTP uses implicit TLS or mandatory STARTTLS with
-certificate verification. Missing configuration fails startup. A private local
-SMTP capture inbox is supported; automated tests inject a fake mailer instead.
+logged. Email uses the official Resend Node SDK exclusively, submitting the
+unchanged plain-text subject and message to `https://api.resend.com`.
 
-SMTP acceptance does not prove inbox delivery. There is no atomic transaction
-between SMTP and PostgreSQL: a crash or database error after SMTP acceptance can
-leave the delivered code unusable. Such a request never reports success; retry
-after cooldown. No active account is created before verification.
+Required email settings are `RESEND_API_KEY` and `RESEND_FROM_EMAIL`, a single
+mailbox on your verified Resend domain. `RESEND_TIMEOUT_MS` defaults to 5000 and
+accepts 1–15000 milliseconds. Missing/invalid configuration fails startup. Keep
+`RESEND_DEBUG` unset or false; enabling SDK error-body logging is rejected.
+The API destination is fixed even if `RESEND_BASE_URL` is set. No SMTP settings,
+local capture transport, console OTP mode or fallback provider are used.
+
+The adapter requires an error-free SDK result with a nonempty email id. API-key,
+sender/domain, quota and rate-limit errors, outages, malformed responses, network
+exceptions and timeouts all retain `503 EMAIL_UNAVAILABLE`; provider bodies and
+exception causes are discarded. Each request has an abort deadline including body
+consumption and is not automatically retried. A timeout can be ambiguous if the
+provider accepted the email before the response was lost. The challenge still
+fails safely, consumes its existing cooldown/budget and requires a new request.
+
+The existing database `sent` state means provider acceptance only. It does not
+confirm recipient delivery, inbox placement or that the user read the message.
+Resend reports later recipient-server delivery, bounce and other events separately;
+see [Resend's event definitions](https://resend.com/docs/webhooks/event-types).
+Use its dashboard for those statuses; delivery webhooks are not implemented here.
+Registration still returns a pending id after acceptance and creates an account
+only after successful OTP verification. No endpoint contract changes.
+
+There is no atomic transaction between Resend and PostgreSQL: a crash or database
+error after provider acceptance can leave an emailed code unusable. Such a
+request never reports success; retry after cooldown. Automated tests mock provider
+responses and never send real email. Manual registration with configured local
+credentials uses the same real Resend API as a future production instance.
 
 See [README configuration](../README.md#configuration) for required variables and
 [architecture](architecture.md) for database constraints, cleanup requirements
-and current production limits. Real SIS and SMTP smoke tests require the actual
-private service key, HTTPS origin and SMTP credentials; mocked test success is
+and current production limits. Real SIS and Resend smoke tests require the actual
+private keys, HTTPS access and verified sender; mocked test success is
 not a live integration claim.

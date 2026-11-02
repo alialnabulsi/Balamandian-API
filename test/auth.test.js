@@ -8,7 +8,6 @@ import { clearTimeout, setTimeout } from 'node:timers';
 import { createApp } from '../dist/app.js';
 import { readAuthConfig } from '../dist/config/auth.js';
 import { SisAdapter } from '../dist/integrations/sis/sis.adapter.js';
-import { SmtpMailer } from '../dist/integrations/email/smtp.adapter.js';
 import { AuthRateLimiter } from '../dist/modules/auth/auth.middleware.js';
 import {
   generateOtp,
@@ -29,10 +28,8 @@ const environment = {
   SIS_BASE_URL: 'https://sis.example.edu',
   SIS_SERVICE_API_KEY: 'test-only-service-key',
   OTP_SECRET: secret,
-  SMTP_HOST: '127.0.0.1',
-  SMTP_PORT: '1025',
-  SMTP_SECURE: 'false',
-  SMTP_FROM: 'no-reply@example.edu',
+  RESEND_API_KEY: 're_test_only_api_key',
+  RESEND_FROM_EMAIL: 'no-reply@example.edu',
 };
 const config = readAuthConfig(environment);
 const fixture = { identifier: 'FICTION001', password: 'test-only-password' };
@@ -48,14 +45,17 @@ const success = {
   },
 };
 
-test('auth configuration requires secrets/SMTP and enforces HTTPS and bounded policy', () => {
+test('auth configuration requires Resend secrets and enforces HTTPS and bounded policy', () => {
   assert.equal(config.sessionLifetimeSeconds, 604800);
+  assert.equal(config.resendTimeoutMs, 5000);
+  assert.equal(config.resendApiKey, environment.RESEND_API_KEY);
+  assert.equal(config.resendFromEmail, environment.RESEND_FROM_EMAIL);
   for (const key of [
     'SIS_BASE_URL',
     'SIS_SERVICE_API_KEY',
     'OTP_SECRET',
-    'SMTP_HOST',
-    'SMTP_FROM',
+    'RESEND_API_KEY',
+    'RESEND_FROM_EMAIL',
   ]) {
     assert.throws(() => readAuthConfig({ ...environment, [key]: '' }));
   }
@@ -70,30 +70,47 @@ test('auth configuration requires secrets/SMTP and enforces HTTPS and bounded po
   for (const key of [
     'SIS_TIMEOUT_MS',
     'SESSION_LIFETIME_SECONDS',
-    'SMTP_PORT',
+    'RESEND_TIMEOUT_MS',
   ]) {
     for (const value of ['', '0', 'NaN', '9999999999'])
       assert.throws(() => readAuthConfig({ ...environment, [key]: value }));
   }
   assert.throws(() => readAuthConfig({ ...environment, OTP_SECRET: 'weak' }));
-  assert.throws(() =>
-    readAuthConfig({ ...environment, SMTP_SECURE: 'invalid' }),
+  for (const value of [
+    ' ',
+    're_contains space',
+    're_key\n',
+    're_key\r',
+    're_key\0',
+  ]) {
+    assert.throws(() =>
+      readAuthConfig({ ...environment, RESEND_API_KEY: value }),
+    );
+  }
+  for (const value of [
+    'invalid',
+    'Name <sender@example.edu>',
+    'a@example.edu,b@example.edu',
+    'a@example.edu\r\nBcc: x@example.edu',
+    'x'.repeat(255) + '@example.edu',
+  ]) {
+    assert.throws(() =>
+      readAuthConfig({ ...environment, RESEND_FROM_EMAIL: value }),
+    );
+  }
+  assert.throws(
+    () => readAuthConfig({ ...environment, RESEND_DEBUG: 'true' }),
+    {
+      message: 'RESEND_DEBUG must not be enabled for authentication email.',
+    },
   );
-  assert.throws(() =>
-    readAuthConfig({ ...environment, SMTP_HOST: 'smtp.example.edu' }),
+  assert.doesNotThrow(() =>
+    readAuthConfig({
+      ...environment,
+      NODE_ENV: 'production',
+      RESEND_DEBUG: 'false',
+    }),
   );
-  assert.throws(() =>
-    readAuthConfig({ ...environment, NODE_ENV: 'production' }),
-  );
-  const remote = readAuthConfig({
-    ...environment,
-    SMTP_HOST: 'smtp.example.edu',
-    SMTP_USER: 'test',
-    SMTP_PASSWORD: 'test',
-  });
-  assert.equal(remote.smtp.requireTLS, true);
-  assert.equal(config.smtp.logger, false);
-  assert.equal(config.smtp.debug, false);
 });
 
 test('OTP and bearer token generators use opaque secrets and identity-bound verifiers', () => {
@@ -331,22 +348,4 @@ test('single-instance rate limiter tracks limits and resets on expiry', () => {
   now = 1000;
   middleware(request, {}, () => allowed++);
   assert.equal(allowed, 3);
-});
-
-test('SMTP connection failure cannot report successful delivery', async () => {
-  // Port zero is assigned to a closed ephemeral local socket, never an external SMTP service.
-  const server = createServer();
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const port = server.address().port;
-  await new Promise((resolve) => server.close(resolve));
-  const mailer = new SmtpMailer({
-    ...config,
-    smtp: { ...config.smtp, port, connectionTimeout: 100 },
-  });
-  try {
-    await assert.rejects(mailer.sendOtp('member@example.edu', '123456'));
-  } finally {
-    mailer.close();
-  }
 });

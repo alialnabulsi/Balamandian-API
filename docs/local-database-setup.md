@@ -61,4 +61,4 @@ process credential overrides may be used. A forced kill can leave the generated
 database for deliberate manual cleanup.
 
 SIS/email are mocked, identities fictional, and no real email or deployed SIS
-request occurs. Server startup separately needs complete SIS/OTP/SMTP settings.
+request occurs. Server startup separately needs complete SIS/OTP/Resend settings.

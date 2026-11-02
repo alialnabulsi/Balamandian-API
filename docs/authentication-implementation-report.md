@@ -1,5 +1,12 @@
 # Authentication implementation report
 
+Historical record of the initial backend implementation. Email delivery has since
+been replaced by the official Resend HTTPS SDK; see the current
+[authentication contract](authentication.md#delivery-and-configuration-boundaries)
+and [README configuration](../README.md#configuration). SMTP setup and the local
+configuration-blocker statements below describe the original implementation,
+not the current provider or current local environment.
+
 Completed locally on 2026-11-02, on branch `dev`, without commits, pushes or
 deployment. Existing PostgreSQL infrastructure and the migration runner were
 preserved. Neither the Flutter repository nor SIS-API was modified.

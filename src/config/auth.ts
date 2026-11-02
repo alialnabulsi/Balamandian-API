@@ -39,22 +39,22 @@ export function readAuthConfig(environment: NodeJS.ProcessEnv = process.env) {
   if (!/^[a-fA-F0-9]{64}$/.test(otpSecret)) {
     throw new Error('OTP_SECRET must contain 32 random bytes encoded as hex.');
   }
-  const secure = environment.SMTP_SECURE ?? 'true';
-  if (!['true', 'false'].includes(secure)) {
-    throw new Error('SMTP_SECURE must be true or false.');
+  const resendApiKey = required(environment, 'RESEND_API_KEY');
+  if (/\s/u.test(resendApiKey)) {
+    throw new Error('RESEND_API_KEY must not contain whitespace.');
   }
-  const smtpHost = required(environment, 'SMTP_HOST');
-  const loopback = ['127.0.0.1', '::1', 'localhost'].includes(smtpHost);
-  const localSmtp = loopback && environment.NODE_ENV !== 'production';
-  const smtpUser = environment.SMTP_USER;
-  const smtpPassword = environment.SMTP_PASSWORD;
-  if (!localSmtp || smtpUser || smtpPassword) {
-    required(environment, 'SMTP_USER');
-    required(environment, 'SMTP_PASSWORD');
+  const resendFromEmail = required(environment, 'RESEND_FROM_EMAIL');
+  if (
+    resendFromEmail.length > 254 ||
+    !/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(resendFromEmail)
+  ) {
+    throw new Error('RESEND_FROM_EMAIL must be a single email address.');
   }
-  const smtpFrom = required(environment, 'SMTP_FROM');
-  if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(smtpFrom)) {
-    throw new Error('SMTP_FROM must be a single email address.');
+  // The SDK's debug mode can print provider error bodies containing email data.
+  if (environment.RESEND_DEBUG === 'true') {
+    throw new Error(
+      'RESEND_DEBUG must not be enabled for authentication email.',
+    );
   }
   return {
     sisBaseUrl: url.origin,
@@ -67,29 +67,9 @@ export function readAuthConfig(environment: NodeJS.ProcessEnv = process.env) {
       604_800,
       2_592_000,
     ),
-    smtp: {
-      host: smtpHost,
-      port: integer(
-        environment,
-        'SMTP_PORT',
-        secure === 'true' ? 465 : 587,
-        65_535,
-      ),
-      secure: secure === 'true',
-      requireTLS: !localSmtp && secure === 'false',
-      ...(smtpUser && smtpPassword
-        ? { auth: { user: smtpUser, pass: smtpPassword } }
-        : {}),
-      connectionTimeout: 5000,
-      greetingTimeout: 5000,
-      socketTimeout: 10_000,
-      // The transport accepts only application-created text, never files or URLs.
-      disableFileAccess: true,
-      disableUrlAccess: true,
-      logger: false as const,
-      debug: false,
-    },
-    smtpFrom,
+    resendApiKey,
+    resendFromEmail,
+    resendTimeoutMs: integer(environment, 'RESEND_TIMEOUT_MS', 5000, 15_000),
   };
 }
 
