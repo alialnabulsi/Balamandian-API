@@ -1,12 +1,14 @@
 # Approved backend architecture
 
-Status: approved architecture; minimal HTTP server preparation.
+Status: approved architecture; HTTP and local PostgreSQL foundation source.
+Database dependency installation and runtime verification await the required local
+Node/PostgreSQL setup documented in README.md.
 
 ## Deployment and technology
 
 Balamandian-API is a modular monolith: one deployable application whose features
 have explicit internal boundaries. Use Node.js LTS, Express 5, strict TypeScript,
-and ESM. Introduce PostgreSQL when application persistence is required.
+and ESM. PostgreSQL 18 is the local application database target.
 The current Node 24 toolchain is documented in the root README.
 
 This keeps deployment and transactions straightforward while allowing modules to
@@ -35,7 +37,9 @@ authentication and session design remains open.
 
 `src/app.ts` composes Express through a factory without binding a port.
 `src/server.ts` owns startup and the listening lifecycle; `src/config/server.ts`
-validates the bind address and port before listening. The former empty
+validates the bind address and port before listening. Database configuration lives
+in `src/config/database.ts`; `src/shared/database/pool.ts` creates the pool and
+verifies PostgreSQL major 18 before HTTP listens. The former empty
 `src/index.ts` tooling placeholder has been removed.
 
 The only explicit route is `GET /health`, a dependency-free liveness response.
@@ -44,9 +48,15 @@ Security headers, disabled framework identification, transport timeouts, startup
 failure handling, and bounded SIGINT/SIGTERM shutdown belong to this foundation.
 See the README for the exact limits, configuration, and local verification command.
 
-Express and its TypeScript declarations are the only dependencies added for this
-stage. No body parser, feature module, external client, or persistence connection
-is composed. Future modules must be mounted before the 404 and final error handlers.
+The `pg` adapter and its types are required but could not be installed under the
+current Node mismatch; exact-pinned installation is a prerequisite, not a completed
+step. No body parser, feature module, external API client, or application table
+exists. Future modules must be mounted before the 404 and final error handlers.
+
+`GET /health` remains liveness-only. Database verification gates startup but is not
+a continuing readiness signal. A separate readiness endpoint is deferred until
+there is a consumer. Shutdown drains HTTP before ending the pool, with one bounded
+10-second deadline covering both resources, including interrupted startup.
 
 ## Code placement
 
@@ -62,7 +72,9 @@ directories or guessing feature names.
 | `src/modules/<feature>/` | Feature HTTP contracts, application operations, business rules, and feature-owned persistence as needed. |
 | `src/integrations/`      | External API adapters, including SIS when integration is approved.                                       |
 | `src/shared/`            | Small, genuinely shared infrastructure; no miscellaneous business logic.                                 |
-| `database/migrations/`   | Ordered, versioned migrations when an application schema is approved.                                    |
+| `src/shared/database/`   | Pool construction, PostgreSQL version verification, and SQL migration infrastructure.                    |
+| `src/scripts/migrate.ts` | Explicit migration command; never imported by HTTP startup.                                              |
+| `database/migrations/`   | Migration conventions and future ordered SQL files; no application schema yet.                           |
 
 Within a feature:
 
@@ -105,6 +117,26 @@ Apply these requirements when corresponding functionality is implemented:
 - Select migration tooling before the first schema change. Run migrations through
   a controlled release step rather than implicitly at every application startup.
 
+## Local database foundation
+
+Centralized environment validation requires explicit database, role, and password
+values and accepts only loopback destinations. The local pool defaults to five
+connections with bounded acquisition, statement, lock, idle-transaction, and client
+query timeouts. Driver errors are not logged because they can contain connection
+details or SQL data. No remote database TLS policy is implied by this local setup.
+
+`npm run db:migrate` uses the same configuration with separately supplied migration
+credentials. A single checked-out client and transaction cover a transaction-scoped
+advisory lock, creation of `public.schema_migrations`, SHA-256 history verification,
+all pending SQL, and tracking inserts. Failed batches roll back and the client is
+discarded. Applied files are immutable and new versions must follow applied history.
+Migrations are trusted transactional SQL without their own transaction control;
+the runner does not parse SQL. See `database/migrations/README.md`.
+
+Database/role provisioning and future table grants are explicit administrative
+steps. Runtime credentials must not own the schema. The first authentication schema
+is still unimplemented. No migrations or database commands were run in this phase.
+
 See [Express security](https://expressjs.com/en/advanced/best-practice-security/),
 [OWASP REST security](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html),
 and [OWASP API consumption](https://api-security.owasp.org/editions/2023/en/0xaa-unsafe-consumption-of-apis/).
@@ -114,9 +146,9 @@ for the corresponding functionality, not controls already implemented.
 ## Decisions intentionally deferred
 
 - Hosting, CI provider, deployment topology, and operational requirements.
-- PostgreSQL provider and major version, migration tooling, and the first schema.
-  Parameterized SQL through `pg` is the starting preference; no driver or ORM is
-  needed during HTTP server preparation.
+- Remote PostgreSQL hosting/TLS policy and the first application schema. Local
+  PostgreSQL 18 and a small tracked SQL runner are selected; parameterized SQL
+  through `pg` remains the persistence convention. No ORM is introduced.
 - Business API contracts, versioning, and application error conventions beyond the
   minimal HTTP fallback responses.
 - Application authentication, sessions, onboarding, and authorization policy.

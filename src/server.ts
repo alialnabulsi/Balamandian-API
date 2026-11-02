@@ -2,65 +2,96 @@ import { createServer } from 'node:http';
 import process from 'node:process';
 
 import { createApp } from './app.js';
+import { readDatabaseConfig } from './config/database.js';
 import { readServerConfig } from './config/server.js';
+import { createDatabasePool, verifyDatabase } from './shared/database/pool.js';
 
-function startServer() {
+async function startServer() {
   const { host, port } = readServerConfig();
+  const pool = createDatabasePool(readDatabaseConfig());
   const server = createServer(
     { headersTimeout: 10_000, requestTimeout: 30_000 },
     createApp(),
   );
-  let stopping = false;
+  let shutdownPromise: Promise<void> | undefined;
 
-  function shutdown() {
-    if (stopping) return;
-    stopping = true;
-    console.info('Stopping HTTP server.');
+  function shutdown(): Promise<void> {
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise = (async () => {
+      console.info('Stopping HTTP server and database pool.');
 
-    const deadline = setTimeout(() => {
-      console.error('HTTP shutdown exceeded 10 seconds; closing connections.');
-      process.exitCode = 1;
-      server.closeAllConnections();
-    }, 10_000);
-    deadline.unref();
+      const deadline = setTimeout(() => {
+        console.error(
+          'Shutdown exceeded 10 seconds; forcing process termination.',
+        );
+        server.closeAllConnections();
+        process.exit(1);
+      }, 10_000);
+      deadline.unref();
 
-    server.close((error) => {
-      clearTimeout(deadline);
-      process.off('SIGINT', shutdown);
-      process.off('SIGTERM', shutdown);
-
-      if (error) {
-        console.error('HTTP shutdown failed.');
+      try {
+        // Drain HTTP work before closing the pool that request handlers will use.
+        await new Promise<void>((resolve) => {
+          server.close((error) => {
+            if (
+              error &&
+              !('code' in error && error.code === 'ERR_SERVER_NOT_RUNNING')
+            ) {
+              console.error('HTTP shutdown failed.');
+              process.exitCode = 1;
+            }
+            resolve();
+          });
+        });
+        await pool.end();
+        console.info('HTTP server and database pool stopped.');
+      } catch {
+        console.error('Database pool shutdown failed.');
         process.exitCode = 1;
-        return;
+      } finally {
+        clearTimeout(deadline);
+        process.off('SIGINT', handleSignal);
+        process.off('SIGTERM', handleSignal);
       }
-
-      console.info('HTTP server stopped.');
-    });
+    })();
+    return shutdownPromise;
   }
 
-  server.once('error', (error: NodeJS.ErrnoException) => {
-    console.error('HTTP server failed:', error.code ?? 'UNKNOWN_ERROR');
+  function handleSignal() {
+    void shutdown();
+  }
+
+  // Install before the initial connection check so startup can also be interrupted.
+  process.on('SIGINT', handleSignal);
+  process.on('SIGTERM', handleSignal);
+
+  server.once('error', () => {
+    console.error('HTTP server failed.');
     process.exitCode = 1;
-    if (server.listening) shutdown();
+    void shutdown();
   });
 
   server.once('listening', () => {
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
     const address = host.includes(':') ? `[${host}]` : host;
     console.info(`Balamandian API listening on http://${address}:${port}`);
   });
 
-  server.listen(port, host);
+  try {
+    await verifyDatabase(pool);
+    if (!shutdownPromise) server.listen(port, host);
+  } catch {
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
+    await shutdown();
+    throw new Error('Database initialization failed.');
+  }
 }
 
-try {
-  startServer();
-} catch (error) {
+startServer().catch(() => {
   console.error(
-    'HTTP server startup failed:',
-    error instanceof Error ? error.message : 'Unknown error.',
+    'API startup failed. Check server/database configuration and local PostgreSQL 18 availability.',
   );
   process.exitCode = 1;
-}
+});
