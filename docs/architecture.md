@@ -1,19 +1,19 @@
 # Approved backend architecture
 
 Status: modular monolith with working HTTP/database infrastructure and complete
-authentication. Baseline: Node.js 24.22.2, npm 11.19.1, Express 5, strict
+authentication and marketplace. Baseline: Node.js 24.22.2, npm 11.19.1, Express 5, strict
 TypeScript/NodeNext ESM and local PostgreSQL 18.6. No ORM is used.
 
 ## Ownership and identity
 
-| System                 | Responsibility                                                                             |
-| ---------------------- | ------------------------------------------------------------------------------------------ |
-| Flutter Android app    | UI and secure client session storage; calls this backend only.                             |
-| Balamandian-API        | Verified application accounts, OTP registration, sessions and future application behavior. |
-| SIS-API                | Institutional passwords and canonical identity over HTTPS.                                 |
-| Application PostgreSQL | Application state, separate from academic data.                                            |
+| System                 | Responsibility                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| Flutter Android app    | UI and secure client session storage; calls this backend only.                                    |
+| Balamandian-API        | Verified application accounts, OTP registration, sessions and authenticated marketplace behavior. |
+| SIS-API                | Institutional passwords and canonical identity over HTTPS.                                        |
+| Application PostgreSQL | Application state, separate from academic data.                                                   |
 
-All future application entities reference internal UUID `app_user.id`. The unique
+Application favorites and ratings reference internal UUID `app_user.id`. The unique
 SIS id is an external identity; email is a verified contact. Neither is an
 application-data primary key or an email-based account-linking key. SIS roles and
 academic profiles are not persisted or interpreted as application permissions.
@@ -21,6 +21,7 @@ academic profiles are not persisted or interpreted as application permissions.
 ## Module boundaries
 
 ```text
+HTTP router/controller -> MarketplaceService -> MarketplaceRepository -> PostgreSQL
 HTTP router/controller -> AuthService -> AuthRepository -> PostgreSQL
                               |-> SisGateway -> SisAdapter -> HTTPS SIS
                               |-> OtpMailer -> ResendMailer -> Resend HTTPS API
@@ -97,6 +98,58 @@ Provider error bodies and causes are neither logged nor propagated. Startup
 rejects SDK debug mode. The SDK uses Node's fetch and owns no SMTP transport or
 application-managed connection pool requiring shutdown.
 
+## Marketplace module
+
+The self-contained `src/modules/marketplace/` module follows HTTP controller →
+service → repository separation. `marketplace.types.ts` defines public DTOs,
+query options and a narrow persistence interface; validators reject unknown keys,
+arrays, malformed pagination, invalid UUIDs and extra rating fields. Controllers
+only map HTTP input/output. Business behavior and injected clocks live in the
+service; all SQL, row conversion and transactions live in the repository.
+`marketplace.composition.ts` constructs dependencies from the existing pool.
+The server supplies required auth and marketplace services to `createApp`.
+Routes mount at `/api/marketplace`; `/api/v1/auth` is preserved. See the complete
+[marketplace contract](marketplace.md).
+
+Migration `0002_marketplace.sql` already defines seven marketplace tables:
+
+- `marketplace_category`: ordered active categories and icon keys.
+- `marketplace_place`: category ownership, descriptions, nullable URLs/coordinates,
+  timezone, archive state and generated full-text search vector.
+- `marketplace_place_image`: ordered gallery URLs with optional alternative text.
+- `marketplace_opening_hour`: ISO weekday and local-time intervals.
+- `marketplace_favorite`: primary key `(user_id, place_id)`.
+- `marketplace_rating`: primary key `(user_id, place_id)`, integer 1–5 and timestamps.
+- `marketplace_place_post`: news/advertisement content, optional image and schedule.
+
+Favorite/rating foreign keys reference internal `public.app_user.id`, never SIS
+identity or email. Every endpoint reuses `sessionAuthentication`; controllers get
+the owner only from `authenticatedSession(response.locals).user.id`. Reads hide
+archived places/categories. Posts also require an unarchived post and inclusive
+start/exclusive end visibility against the injected clock.
+
+List count/page queries use one statement snapshot and deterministic final UUID
+ordering, including out-of-range pages. Favorites precede exact rating averages
+on place lists and start time on post lists. Rating aggregates are independent
+lateral queries; images/hours use separate ordered detail queries inside a
+repeatable-read read-only transaction. Numeric strings and dates become explicit
+DTO numbers and ISO UTC strings; internal persistence fields never reach HTTP.
+
+Mutations check active place/category under a place update lock and category share
+lock on one checked-out client. Place locks serialize marketplace mutations and
+hold the post-write rating aggregate consistent through commit; category sharing
+prevents archival between validation and mutation. Favorites use conflict-ignore,
+ratings use conflict-update and deletes are idempotent. Unexpected failures roll
+back and discard failed connections. No extra schema migration is needed.
+
+Marketplace mutations alone have a separate bounded per-user process-local limit:
+60 per 15 minutes, up to 10,000 users, expired-entry reclamation and fail-closed
+capacity behavior. Authentication runs first; reads do not consume this budget.
+Retry-After is bounded to 1–900 seconds. Shared limits remain required for multiple
+instances. No admin CRUD, uploads, object-storage implementation, comments,
+open-now calculation or map-provider integration exists. Nullable database URLs
+are supported; local placeholders belong to the client.
+
 ## SIS and sessions
 
 Credentials are sent once to the HTTPS SIS origin's `POST /api/v1/auth/verify`
@@ -138,7 +191,8 @@ existing ten-second deadline. `/health` is liveness, not continuous readiness.
 
 The preserved migration runner checks order/checksums and applies SQL/tracking
 transactionally under its existing lock. Applied files are immutable. No
-migrations run during startup. No institutional/future-feature tables,
+migrations run during startup. The existing marketplace schema is used without
+altering applied migrations. No institutional tables,
 database roles or installation changes are introduced.
 
 Before multi-instance production: shared rate limits, reviewed TLS/proxy/IP
@@ -176,3 +230,13 @@ Consulted before changing backend code:
 - [Official Resend SDK v6.37.0](https://github.com/resend/resend-node/tree/v6.37.0): request cancellation, fixed API origin, debug behavior and published types.
 - [TypeScript global declarations](https://www.typescriptlang.org/docs/handbook/declaration-files/templates/global-modifying-module-d-ts.html): narrow Node header-type compatibility without enabling DOM globals.
 - [OWASP sessions](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) and [verification-token guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html): unpredictable, expiring, single-use tokens and abuse limits; no password-reset feature is implemented.
+
+Additional official references consulted for marketplace implementation:
+
+- [node-postgres queries](https://node-postgres.com/features/queries): values use parameters; SQL identifiers remain trusted source code.
+- [node-postgres transactions](https://node-postgres.com/features/transactions): a checked-out client owns every transaction statement.
+- [PostgreSQL 18 INSERT](https://www.postgresql.org/docs/18/sql-insert.html): conflict-ignore favorites and conflict-update ratings.
+- [PostgreSQL 18 text search](https://www.postgresql.org/docs/18/functions-textsearch.html): simple-language query matching alongside literal substring/category matching.
+- [PostgreSQL 18 transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html): statement snapshots for lists, repeatable-read detail collections and post-lock statements for mutation statistics.
+- [OWASP REST security](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html): authenticated access, input validation and safe errors.
+- [npm test](https://docs.npmjs.com/cli/v11/commands/npm-test/), [ESLint CLI](https://eslint.org/docs/latest/use/command-line-interface), [typed linting](https://typescript-eslint.io/getting-started/typed-linting/) and [Prettier CLI](https://prettier.io/docs/cli): existing verification commands without dependency changes.

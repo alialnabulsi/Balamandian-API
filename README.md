@@ -5,7 +5,9 @@ strict TypeScript/ESM, PostgreSQL 18 and opaque bearer sessions in a modular
 monolith. SIS owns institutional passwords/data; this API owns verified
 application accounts, OTP registration and sessions. No application password exists.
 
-Authentication is implemented. Real SIS verification and Resend email submission require
+Authentication and the authenticated marketplace are implemented. See the
+[marketplace contract](docs/marketplace.md) for categories, place search/details,
+news/advertisements, favorites and ratings. Real SIS verification and Resend email submission require
 private configuration. See [authentication](docs/authentication.md) for exact
 requests/responses and [architecture](docs/architecture.md) for module boundaries,
 security decisions and official references.
@@ -115,7 +117,8 @@ Repeated registration shares persistent limits and rotates the opaque id.
 | `npm run format`, `npm run format:check`                | Formatting/checking.                                                                                               |
 
 Integration tests require PostgreSQL 18 credentials with CREATE DATABASE
-permission. They create a random `balamandian_auth_<uuid>_test` database; destructive
+permission. They create random `balamandian_auth_<uuid>_test` and
+`balamandian_market_<uuid>_test` databases; destructive
 fixtures run there, never against development data or an existing test database.
 No roles are created. A forced process kill may leave that generated database for
 manual cleanup. Private PGUSER/PGPASSWORD process overrides may be used.
@@ -131,7 +134,9 @@ node --env-file-if-exists=.env --test test/integration/*.test.js
 Tests never use deployed SIS or send real email. Real PostgreSQL tests cover all
 authentication flows, OTP expiry/limits/replay/resend/concurrency, rollback, email
 failure/in-flight delivery, account status and session restoration/expiry/logout.
-They apply the migration and verify an idempotent repeat.
+They apply both real migrations and verify an idempotent repeat. Marketplace tests
+cover user ownership, scheduling, ordering, search and concurrent mutations using
+dedicated fictional fixtures; no development seed data is required.
 
 After full configuration, `GET /health` returns `{"status":"ok"}` for HTTP
 liveness only. On PowerShell:

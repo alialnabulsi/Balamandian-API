@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 
 import { createApp } from '../../dist/app.js';
+import { createMarketplaceDependencies } from '../../dist/modules/marketplace/marketplace.composition.js';
 import { readDatabaseConfig } from '../../dist/config/database.js';
 import { ResendMailer } from '../../dist/integrations/email/resend.adapter.js';
 import { AuthRepository } from '../../dist/modules/auth/auth.repository.js';
@@ -54,7 +55,10 @@ test('authentication integration using mocked SIS/email and a new isolated Postg
   created = true;
   pool = createDatabasePool({ ...config, database });
   await verifyDatabase(pool);
-  assert.deepEqual(await runMigrations(pool), ['0001_authentication.sql']);
+  assert.deepEqual(await runMigrations(pool), [
+    '0001_authentication.sql',
+    '0002_marketplace.sql',
+  ]);
   assert.deepEqual(await runMigrations(pool), []);
   assert.equal(
     (await pool.query('SELECT current_database() AS name')).rows[0].name,
@@ -65,7 +69,7 @@ test('authentication integration using mocked SIS/email and a new isolated Postg
   async function fixture() {
     // This pool only connects to the generated test database, never the development database.
     await pool.query(
-      'TRUNCATE public.app_session, public.pending_registration, public.app_user',
+      'TRUNCATE public.marketplace_favorite, public.marketplace_rating, public.app_session, public.pending_registration, public.app_user',
     );
     let now = new Date();
     const emails = [];
@@ -695,7 +699,9 @@ test('authentication integration using mocked SIS/email and a new isolated Postg
     'all six HTTP endpoints expose the documented contracts and statuses',
     async () => {
       const f = await fixture();
-      const server = createServer(createApp(f.service));
+      const server = createServer(
+        createApp(f.service, createMarketplaceDependencies(pool).service),
+      );
       server.listen(0, '127.0.0.1');
       await once(server, 'listening');
       const base = `http://127.0.0.1:${server.address().port}/api/v1/auth`;

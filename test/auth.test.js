@@ -6,6 +6,7 @@ import test from 'node:test';
 import { clearTimeout, setTimeout } from 'node:timers';
 
 import { createApp } from '../dist/app.js';
+import { MarketplaceService } from '../dist/modules/marketplace/marketplace.service.js';
 import { readAuthConfig } from '../dist/config/auth.js';
 import { SisAdapter } from '../dist/integrations/sis/sis.adapter.js';
 import { AuthRateLimiter } from '../dist/modules/auth/auth.middleware.js';
@@ -273,7 +274,7 @@ test('SIS timeout aborts credential requests without retrying', async () => {
 });
 
 async function withHttp(t, service, run) {
-  const server = createServer(createApp(service));
+  const server = createServer(createApp(service, new MarketplaceService({})));
   t.after(
     () =>
       new Promise((resolve) => {

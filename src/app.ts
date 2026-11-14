@@ -2,6 +2,8 @@ import express, { type ErrorRequestHandler } from 'express';
 
 import { createAuthRouter } from './modules/auth/auth.routes.js';
 import type { AuthService } from './modules/auth/auth.service.js';
+import { createMarketplaceRouter } from './modules/marketplace/marketplace.routes.js';
+import type { MarketplaceService } from './modules/marketplace/marketplace.service.js';
 import { HttpError } from './shared/http-error.js';
 
 const errorHandler: ErrorRequestHandler = (
@@ -78,7 +80,10 @@ const errorHandler: ErrorRequestHandler = (
   });
 };
 
-export function createApp(authService: AuthService) {
+export function createApp(
+  authService: AuthService,
+  marketplaceService: MarketplaceService,
+) {
   const app = express();
 
   app.disable('x-powered-by');
@@ -96,6 +101,10 @@ export function createApp(authService: AuthService) {
   });
 
   app.use('/api/v1/auth', createAuthRouter(authService));
+  app.use(
+    '/api/marketplace',
+    createMarketplaceRouter(marketplaceService, authService),
+  );
 
   app.use((_request, response) => {
     response.status(404).json({

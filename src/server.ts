@@ -6,6 +6,7 @@ import { readAuthConfig } from './config/auth.js';
 import { readDatabaseConfig } from './config/database.js';
 import { readServerConfig } from './config/server.js';
 import { createAuthDependencies } from './modules/auth/auth.composition.js';
+import { createMarketplaceDependencies } from './modules/marketplace/marketplace.composition.js';
 import { createDatabasePool, verifyDatabase } from './shared/database/pool.js';
 
 async function startServer() {
@@ -13,9 +14,10 @@ async function startServer() {
   const authConfig = readAuthConfig();
   const pool = createDatabasePool(readDatabaseConfig());
   const auth = createAuthDependencies(pool, authConfig);
+  const marketplace = createMarketplaceDependencies(pool);
   const server = createServer(
     { headersTimeout: 10_000, requestTimeout: 30_000 },
-    createApp(auth.service),
+    createApp(auth.service, marketplace.service),
   );
   let shutdownPromise: Promise<void> | undefined;
 
