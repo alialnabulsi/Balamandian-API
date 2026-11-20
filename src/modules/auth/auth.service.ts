@@ -98,6 +98,7 @@ export class AuthService {
           pending.id !== id ||
           pending.consumedAt ||
           pending.invalidatedAt ||
+          !pending.identitySnapshot ||
           pending.registrationExpiresAt <= now
         ) {
           throw invalidRegistration();
@@ -105,7 +106,11 @@ export class AuthService {
         if (await tx.findUser(existing.sisUserId)) throw invalidRegistration();
         this.assertCanSend(pending, now);
         const issued = this.issueCode(
-          { userId: pending.sisUserId, email: pending.institutionalEmail },
+          {
+            userId: pending.sisUserId,
+            email: pending.institutionalEmail,
+            ...pending.identitySnapshot,
+          },
           pending,
           now,
           false,
@@ -130,6 +135,7 @@ export class AuthService {
           pending.id !== id ||
           pending.consumedAt ||
           pending.invalidatedAt ||
+          !pending.identitySnapshot ||
           pending.registrationExpiresAt <= now
         ) {
           return invalidRegistration();
@@ -166,9 +172,18 @@ export class AuthService {
         }
         if (await tx.findUser(pending.sisUserId)) return accountExists();
         const user = await tx.createUser(
-          { userId: pending.sisUserId, email: pending.institutionalEmail },
+          {
+            userId: pending.sisUserId,
+            email: pending.institutionalEmail,
+            ...pending.identitySnapshot,
+          },
           now,
         );
+        await tx.saveIdentity(user.id, {
+          userId: pending.sisUserId,
+          email: pending.institutionalEmail,
+          ...pending.identitySnapshot,
+        });
         const session = this.newSession(now);
         await tx.createSession(user.id, session.stored);
         pending.consumedAt = now;
@@ -205,6 +220,7 @@ export class AuthService {
           'This application account is disabled.',
         );
       // Identity is matched only by canonical SIS id. Email changes are never linked automatically.
+      await tx.saveIdentity(user.id, identity);
       const session = this.newSession(this.now());
       await tx.createSession(user.id, session.stored);
       return this.authResponse(user, session);
@@ -271,6 +287,12 @@ export class AuthService {
       id,
       sisUserId: identity.userId,
       institutionalEmail: identity.email,
+      identitySnapshot: {
+        firstName: identity.firstName,
+        lastName: identity.lastName,
+        roles: identity.roles,
+        academic: identity.academic,
+      },
       otpVerifier: otpVerifier(this.options.otpSecret, id, otp),
       otpExpiresAt: new Date(
         Math.min(

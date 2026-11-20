@@ -1,7 +1,7 @@
 # Approved backend architecture
 
 Status: modular monolith with working HTTP/database infrastructure and complete
-authentication and marketplace. Baseline: Node.js 24.22.2, npm 11.19.1, Express 5, strict
+authentication, marketplace and profile/social identity. Baseline: Node.js 24.22.2, npm 11.19.1, Express 5, strict
 TypeScript/NodeNext ESM and local PostgreSQL 18.6. No ORM is used.
 
 ## Ownership and identity
@@ -16,12 +16,14 @@ TypeScript/NodeNext ESM and local PostgreSQL 18.6. No ORM is used.
 Application favorites and ratings reference internal UUID `app_user.id`. The unique
 SIS id is an external identity; email is a verified contact. Neither is an
 application-data primary key or an email-based account-linking key. SIS roles and
-academic profiles are not persisted or interpreted as application permissions.
+minimal profile metadata are persisted only as documented in [profiles](profile.md).
+They are never interpreted as application administrative permissions.
 
 ## Module boundaries
 
 ```text
 HTTP router/controller -> MarketplaceService -> MarketplaceRepository -> PostgreSQL
+HTTP router/controller -> ProfileService -> ProfileRepository -> PostgreSQL
 HTTP router/controller -> AuthService -> AuthRepository -> PostgreSQL
                               |-> SisGateway -> SisAdapter -> HTTPS SIS
                               |-> OtpMailer -> ResendMailer -> Resend HTTPS API
@@ -154,9 +156,11 @@ are supported; local placeholders belong to the client.
 
 Credentials are sent once to the HTTPS SIS origin's `POST /api/v1/auth/verify`
 with a private service bearer key. The adapter rejects redirects, applies a whole
-operation deadline and 256 KiB response cap, and validates `data.userId` and
-`data.email`. Nested academic fields are accepted but not retained. No extra
-member request is made.
+operation deadline and 256 KiB response cap, and validates canonical ID, email,
+names, institutional roles and selected academic metadata. Registration uses the
+verified response without an extra member request. Missing legacy profiles can
+hydrate through the service-authenticated member endpoint. See [profiles](profile.md)
+for snapshot ownership, privacy, transaction and username guarantees.
 
 Upstream `401 INVALID_CREDENTIALS` maps to an authentication error;
 `401 SERVICE_UNAUTHORIZED` maps to service unavailability. Rate limiting,

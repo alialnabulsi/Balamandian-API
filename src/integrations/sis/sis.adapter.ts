@@ -6,7 +6,7 @@ import type {
   SisGateway,
   SisIdentity,
 } from '../../modules/auth/auth.types.js';
-import { validInstitutionalEmail } from '../../modules/auth/auth.validators.js';
+import { parseSisIdentity } from './sis.identity.js';
 
 const MAX_RESPONSE_BYTES = 256 * 1024;
 
@@ -33,6 +33,17 @@ export class SisAdapter implements SisGateway {
   ) {}
 
   async verify(credentials: Credentials): Promise<SisIdentity> {
+    return this.request('/api/v1/auth/verify', credentials);
+  }
+
+  async member(sisUserId: string): Promise<SisIdentity> {
+    return this.request(`/api/v1/members/${encodeURIComponent(sisUserId)}`);
+  }
+
+  private async request(
+    path: string,
+    credentials?: Credentials,
+  ): Promise<SisIdentity> {
     // Timeout includes response headers and bounded body consumption. Never retry credentials.
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -43,9 +54,9 @@ export class SisAdapter implements SisGateway {
     let response: Response | undefined;
     try {
       response = await this.fetchRequest(
-        new URL('/api/v1/auth/verify', this.config.sisBaseUrl),
+        new URL(path, this.config.sisBaseUrl),
         {
-          method: 'POST',
+          method: credentials ? 'POST' : 'GET',
           redirect: 'error',
           signal: controller.signal,
           headers: {
@@ -53,7 +64,7 @@ export class SisAdapter implements SisGateway {
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },
-          body: JSON.stringify(credentials),
+          ...(credentials ? { body: JSON.stringify(credentials) } : {}),
         },
       );
       if (response.status === 429) {
@@ -131,17 +142,14 @@ export class SisAdapter implements SisGateway {
       }
       if (response.status !== 200) throw malformed();
       if (!record(payload) || !record(payload.data)) throw malformed();
-      const { userId, email } = payload.data;
-      if (
-        typeof userId !== 'string' ||
-        !userId ||
-        userId.length > 128 ||
-        /[\s\p{Cc}]/u.test(userId) ||
-        !validInstitutionalEmail(email)
-      )
-        throw malformed();
-      // SIS academic records and roles are intentionally neither persisted nor application permissions.
-      return { userId, email };
+      if (!credentials && payload.data.accountStatus !== 'active') {
+        throw new HttpError(
+          503,
+          'PROFILE_UNAVAILABLE',
+          'University identity is currently unavailable. Please retry later.',
+        );
+      }
+      return parseSisIdentity(payload.data);
     } catch (error) {
       if (error instanceof HttpError) throw error;
       throw new HttpError(

@@ -18,10 +18,9 @@ relevant sources and decisions in the work report.
 # Scope and architecture
 
 - Read README.md and docs/architecture.md before implementation.
-- This repository is in HTTP server preparation, with a liveness-only health route.
-  Implement features only when the user explicitly authorizes them; do not
-  pre-create business endpoints, schemas, authentication, SIS communication,
-  feature modules, or speculative infrastructure.
+- Authentication, marketplace and profile/social identity modules are implemented.
+  Read their contracts in docs/ before extending them. Implement additional features
+  only when authorized; do not pre-create speculative endpoints or infrastructure.
 - Preserve the modular monolith, strict TypeScript, and ESM conventions.
 - Organize future code by feature. Separate HTTP handling, business rules,
   persistence, and external integration; supply dependencies explicitly.

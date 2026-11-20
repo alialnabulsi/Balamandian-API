@@ -50,6 +50,7 @@ test('marketplace integration in a newly generated isolated PostgreSQL 18 databa
   assert.deepEqual(await runMigrations(pool), [
     '0001_authentication.sql',
     '0002_marketplace.sql',
+    '0003_user_profile.sql',
   ]);
   assert.deepEqual(await runMigrations(pool), []);
   assert.equal(

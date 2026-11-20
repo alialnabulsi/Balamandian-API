@@ -5,6 +5,8 @@ import type { AuthService } from './modules/auth/auth.service.js';
 import { createMarketplaceRouter } from './modules/marketplace/marketplace.routes.js';
 import type { MarketplaceService } from './modules/marketplace/marketplace.service.js';
 import { HttpError } from './shared/http-error.js';
+import { createProfileRouter } from './modules/profile/profile.routes.js';
+import type { ProfileService } from './modules/profile/profile.service.js';
 
 const errorHandler: ErrorRequestHandler = (
   error: unknown,
@@ -83,6 +85,7 @@ const errorHandler: ErrorRequestHandler = (
 export function createApp(
   authService: AuthService,
   marketplaceService: MarketplaceService,
+  profileService?: ProfileService,
 ) {
   const app = express();
 
@@ -101,6 +104,8 @@ export function createApp(
   });
 
   app.use('/api/v1/auth', createAuthRouter(authService));
+  if (profileService)
+    app.use('/api/v1', createProfileRouter(profileService, authService));
   app.use(
     '/api/marketplace',
     createMarketplaceRouter(marketplaceService, authService),

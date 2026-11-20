@@ -5,7 +5,10 @@ strict TypeScript/ESM, PostgreSQL 18 and opaque bearer sessions in a modular
 monolith. SIS owns institutional passwords/data; this API owns verified
 application accounts, OTP registration and sessions. No application password exists.
 
-Authentication and the authenticated marketplace are implemented. See the
+Authentication, profiles/social identity and the authenticated marketplace are implemented.
+See [profiles](docs/profile.md) for identity ownership, avatars, follows, all eleven
+new endpoint contracts, username policy, legacy hydration and database synchronization.
+See the
 [marketplace contract](docs/marketplace.md) for categories, place search/details,
 news/advertisements, favorites and ratings. Real SIS verification and Resend email submission require
 private configuration. See [authentication](docs/authentication.md) for exact
@@ -134,7 +137,7 @@ node --env-file-if-exists=.env --test test/integration/*.test.js
 Tests never use deployed SIS or send real email. Real PostgreSQL tests cover all
 authentication flows, OTP expiry/limits/replay/resend/concurrency, rollback, email
 failure/in-flight delivery, account status and session restoration/expiry/logout.
-They apply both real migrations and verify an idempotent repeat. Marketplace tests
+They apply all three real migrations and verify an idempotent repeat. Marketplace tests
 cover user ownership, scheduling, ordering, search and concurrent mutations using
 dedicated fictional fixtures; no development seed data is required.
 

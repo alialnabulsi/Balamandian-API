@@ -39,8 +39,9 @@ const success = {
     userId: 'FICTION001',
     email: 'member@example.edu',
     firstName: 'Example',
+    lastName: 'Member',
     roles: ['student'],
-    student: { programs: [{ id: 1 }] },
+    student: { programs: [] },
     instructor: null,
     advisor: null,
   },
@@ -176,6 +177,15 @@ test('SIS adapter sends the confirmed HTTPS contract once and accepts nested aca
   assert.deepEqual(await adapter.verify(fixture), {
     userId: 'FICTION001',
     email: 'member@example.edu',
+    firstName: 'Example',
+    lastName: 'Member',
+    roles: ['student'],
+    academic: {
+      campus: null,
+      admissionYear: null,
+      programs: [],
+      departments: [],
+    },
   });
   assert.equal(calls, 1);
 });
@@ -213,6 +223,25 @@ test('SIS errors distinguish bad member credentials, bad service key, rate limit
     ).verify(fixture),
     { code: 'SIS_UNAVAILABLE' },
   );
+});
+
+test('service-authenticated member hydration uses canonical endpoint without credentials', async () => {
+  let called = false;
+  const adapter = new SisAdapter(config, async (url, options) => {
+    called = true;
+    assert.equal(url.pathname, '/api/v1/members/FICTION001');
+    assert.equal(options.method, 'GET');
+    assert.equal(options.body, undefined);
+    assert.equal(
+      options.headers.Authorization,
+      `Bearer ${config.sisServiceKey}`,
+    );
+    return Response.json({
+      data: { ...success.data, accountStatus: 'active' },
+    });
+  });
+  assert.equal((await adapter.member('FICTION001')).firstName, 'Example');
+  assert.equal(called, true);
 });
 
 test('SIS rejects malformed, oversized and invalid identity responses', async () => {

@@ -7,6 +7,8 @@ import { readDatabaseConfig } from './config/database.js';
 import { readServerConfig } from './config/server.js';
 import { createAuthDependencies } from './modules/auth/auth.composition.js';
 import { createMarketplaceDependencies } from './modules/marketplace/marketplace.composition.js';
+import { createProfileDependencies } from './modules/profile/profile.composition.js';
+import { SisAdapter } from './integrations/sis/sis.adapter.js';
 import { createDatabasePool, verifyDatabase } from './shared/database/pool.js';
 
 async function startServer() {
@@ -15,9 +17,10 @@ async function startServer() {
   const pool = createDatabasePool(readDatabaseConfig());
   const auth = createAuthDependencies(pool, authConfig);
   const marketplace = createMarketplaceDependencies(pool);
+  const profile = createProfileDependencies(pool, new SisAdapter(authConfig));
   const server = createServer(
     { headersTimeout: 10_000, requestTimeout: 30_000 },
-    createApp(auth.service, marketplace.service),
+    createApp(auth.service, marketplace.service, profile.service),
   );
   let shutdownPromise: Promise<void> | undefined;
 

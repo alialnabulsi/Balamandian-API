@@ -31,6 +31,10 @@ never during server startup. `0001_authentication.sql` creates `app_user`,
 `pending_registration` and `app_session`. The foundation already owns
 `schema_migrations`. Never edit applied SQL; use forward migrations.
 
+`0002_marketplace.sql` and `0003_user_profile.sql` follow authentication in the same
+runner. Profile migration/synchronization and local execution evidence are in
+[the profile report](profile.md). No reset or SIS database change is required.
+
 Read-only verification through your existing psql connection:
 
 ```sql

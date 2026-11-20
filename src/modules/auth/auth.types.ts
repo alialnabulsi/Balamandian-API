@@ -1,15 +1,18 @@
+import type { IdentitySnapshot } from '../profile/profile.types.js';
+
 export interface Credentials {
   identifier: string;
   password: string;
 }
 
-export interface SisIdentity {
+export interface SisIdentity extends IdentitySnapshot {
   userId: string;
   email: string;
 }
 
 export interface SisGateway {
   verify(credentials: Credentials): Promise<SisIdentity>;
+  member?(sisUserId: string): Promise<SisIdentity>;
 }
 
 export interface OtpMailer {
@@ -25,6 +28,8 @@ export interface AppUser {
 }
 
 export interface PendingRegistration {
+  identitySnapshot:
+    import('../profile/profile.types.js').IdentitySnapshot | null;
   id: string;
   sisUserId: string;
   institutionalEmail: string;

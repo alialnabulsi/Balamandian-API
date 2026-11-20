@@ -24,7 +24,19 @@ const credentials = {
   identifier: 'FICTION001',
   password: 'test-only-sis-password',
 };
-const identity = { userId: 'FICTION001', email: 'member@example.edu' };
+const identity = {
+  userId: 'FICTION001',
+  email: 'member@example.edu',
+  firstName: 'Example',
+  lastName: 'Member',
+  roles: ['student'],
+  academic: {
+    campus: null,
+    admissionYear: null,
+    programs: [],
+    departments: [],
+  },
+};
 
 test('authentication integration using mocked SIS/email and a new isolated PostgreSQL database', async (t) => {
   const config = readDatabaseConfig();
@@ -58,6 +70,7 @@ test('authentication integration using mocked SIS/email and a new isolated Postg
   assert.deepEqual(await runMigrations(pool), [
     '0001_authentication.sql',
     '0002_marketplace.sql',
+    '0003_user_profile.sql',
   ]);
   assert.deepEqual(await runMigrations(pool), []);
   assert.equal(
@@ -69,7 +82,7 @@ test('authentication integration using mocked SIS/email and a new isolated Postg
   async function fixture() {
     // This pool only connects to the generated test database, never the development database.
     await pool.query(
-      'TRUNCATE public.marketplace_favorite, public.marketplace_rating, public.app_session, public.pending_registration, public.app_user',
+      'TRUNCATE public.user_avatar, public.user_follow, public.user_profile, public.marketplace_favorite, public.marketplace_rating, public.app_session, public.pending_registration, public.app_user',
     );
     let now = new Date();
     const emails = [];
@@ -582,6 +595,11 @@ test('authentication integration using mocked SIS/email and a new isolated Postg
       });
       await assert.rejects(
         invalidLifetime.verify(pending.pendingRegistrationId, f.emails[0].otp),
+      );
+      assert.equal(
+        (await pool.query('SELECT count(*) FROM public.user_profile')).rows[0]
+          .count,
+        '0',
       );
       assert.equal(
         (await pool.query('SELECT count(*) FROM public.app_user')).rows[0]

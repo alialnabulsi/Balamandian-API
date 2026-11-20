@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import { persistIdentity } from '../profile/profile.identity.js';
 
 import type {
   AppUser,
@@ -15,7 +16,8 @@ const pendingColumns = `id, sis_user_id AS "sisUserId", institutional_email AS "
   failed_attempts AS "failedAttempts", resend_count AS "resendCount",
   next_send_at AS "nextSendAt", registration_expires_at AS "registrationExpiresAt",
   delivery_state AS "deliveryState", consumed_at AS "consumedAt",
-  invalidated_at AS "invalidatedAt", created_at AS "createdAt", updated_at AS "updatedAt"`;
+  invalidated_at AS "invalidatedAt", created_at AS "createdAt", updated_at AS "updatedAt",
+  identity_snapshot AS "identitySnapshot"`;
 
 export class AuthTransaction {
   constructor(private readonly client: PoolClient) {}
@@ -42,8 +44,8 @@ export class AuthTransaction {
       `INSERT INTO public.pending_registration
        (id, sis_user_id, institutional_email, otp_verifier, otp_expires_at,
         failed_attempts, resend_count, next_send_at, registration_expires_at,
-        delivery_state, consumed_at, invalidated_at, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        delivery_state, consumed_at, invalidated_at, created_at, updated_at, identity_snapshot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (sis_user_id) DO UPDATE SET
          id = EXCLUDED.id, institutional_email = EXCLUDED.institutional_email,
          otp_verifier = EXCLUDED.otp_verifier, otp_expires_at = EXCLUDED.otp_expires_at,
@@ -51,7 +53,7 @@ export class AuthTransaction {
          next_send_at = EXCLUDED.next_send_at, registration_expires_at = EXCLUDED.registration_expires_at,
          delivery_state = EXCLUDED.delivery_state, consumed_at = EXCLUDED.consumed_at,
          invalidated_at = EXCLUDED.invalidated_at, created_at = EXCLUDED.created_at,
-         updated_at = EXCLUDED.updated_at`,
+         updated_at = EXCLUDED.updated_at, identity_snapshot = EXCLUDED.identity_snapshot`,
       [
         pending.id,
         pending.sisUserId,
@@ -67,6 +69,9 @@ export class AuthTransaction {
         pending.invalidatedAt,
         pending.createdAt,
         pending.updatedAt,
+        pending.identitySnapshot
+          ? JSON.stringify(pending.identitySnapshot)
+          : null,
       ],
     );
   }
@@ -89,6 +94,10 @@ export class AuthTransaction {
        VALUES ($1,$2,$3,$4)`,
       [userId, session.tokenHash, session.createdAt, session.expiresAt],
     );
+  }
+
+  async saveIdentity(userId: string, identity: SisIdentity) {
+    await persistIdentity(this.client, userId, identity);
   }
 }
 
